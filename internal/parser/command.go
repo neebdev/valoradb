@@ -11,6 +11,7 @@ const (
 	CmdRollback CommandType = "ROLLBACK"
 	CmdAdd      CommandType = "ADD"
 	CmdSub      CommandType = "SUB"
+	CmdDiv      CommandType = "DIV"
 	CmdExists   CommandType = "EXISTS"
 	CmdKeys     CommandType = "KEYS"
 	CmdType     CommandType = "TYPE"

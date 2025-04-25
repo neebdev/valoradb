@@ -51,7 +51,7 @@ func ParseCommand(raw string) (*Command, error) {
 			cmd.ValueType = ValueType(strings.ToLower(tokens[4]))
 		}
 
-	case CmdAdd, CmdSub:
+	case CmdAdd, CmdSub, CmdDiv:
 		if len(tokens) != 3 {
 			return nil, fmt.Errorf("%s must be: %s key value", cmd.Type, cmd.Type)
 		}
@@ -110,7 +110,7 @@ func InferType(value string) (ValueType, error) {
 }
 
 func ValidateCommand(cmd *Command) error {
-	usesValue := cmd.Type == CmdSet || cmd.Type == CmdAdd || cmd.Type == CmdSub
+	usesValue := cmd.Type == CmdSet || cmd.Type == CmdAdd || cmd.Type == CmdSub || cmd.Type == CmdDiv
 	if !usesValue {
 		return nil
 	}
@@ -141,6 +141,18 @@ func ValidateCommand(cmd *Command) error {
 			cmd.ValueType != TypeBool &&
 			cmd.ValueType != TypeString {
 			return fmt.Errorf("SET supports only int, float, bool, string types, not %s", cmd.ValueType)
+		}
+	case CmdDiv:
+		if cmd.ValueType != TypeNumber {
+			return fmt.Errorf("%s supports only int or float types, not %s", cmd.Type, cmd.ValueType)
+		}
+		parsedVal, err := strconv.ParseFloat(cmd.Value, 64)
+		if err != nil {
+			return fmt.Errorf("invalid number value: %s", cmd.Value)
+
+		}
+		if parsedVal == 0 {
+			return fmt.Errorf("cannot divide %s by zero", cmd.Key)
 		}
 	}
 
