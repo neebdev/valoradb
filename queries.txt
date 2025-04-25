@@ -5,3 +5,6 @@ BEGIN;
 SET name "Bob";
 COMMIT;
 GET name;
+EXISTS asd;
+KEYS *;
+TYPE lol;
