@@ -1,5 +1,5 @@
 SET name "Alice";
-SET age true;
+SET age 30.0 TYPE number;
 GET name;
 BEGIN;
 SET name "Bob";
