@@ -63,7 +63,7 @@ func ParseCommand(raw string) (*Command, error) {
 		}
 		cmd.Key = tokens[1]
 
-	case CmdBegin, CmdCommit, CmdAbort:
+	case CmdBegin, CmdCommit, CmdRollback:
 
 	default:
 		return nil, errors.New("unknown command: " + string(cmd.Type))
@@ -78,11 +78,8 @@ func ParseCommand(raw string) (*Command, error) {
 }
 
 func InferType(value string) (ValueType, error) {
-	if _, err := strconv.ParseInt(value, 10, 64); err == nil {
-		return TypeInt, nil
-	}
 	if _, err := strconv.ParseFloat(value, 64); err == nil {
-		return TypeFloat, nil
+		return TypeNumber, nil
 	}
 	if value == "true" || value == "false" {
 		return TypeBool, nil
@@ -117,12 +114,11 @@ func ValidateCommand(cmd *Command) error {
 
 	switch cmd.Type {
 	case CmdAdd, CmdSub:
-		if cmd.ValueType != TypeInt && cmd.ValueType != TypeFloat {
+		if cmd.ValueType != TypeNumber {
 			return fmt.Errorf("%s supports only int or float types, not %s", cmd.Type, cmd.ValueType)
 		}
 	case CmdSet:
-		if cmd.ValueType != TypeInt &&
-			cmd.ValueType != TypeFloat &&
+		if cmd.ValueType != TypeNumber &&
 			cmd.ValueType != TypeBool &&
 			cmd.ValueType != TypeString {
 			return fmt.Errorf("SET supports only int, float, bool, string types, not %s", cmd.ValueType)
