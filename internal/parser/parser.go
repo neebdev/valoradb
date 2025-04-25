@@ -21,7 +21,8 @@ func ParseQueriesFromFile(filename string) ([]string, error) {
 	for _, raw := range rawQueries {
 		trimmed := strings.TrimSpace(raw)
 		if trimmed != "" {
-			queries = append(queries, trimmed)
+			normalized := strings.Join(strings.Fields(trimmed), " ")
+			queries = append(queries, normalized)
 		}
 	}
 	return queries, nil
@@ -58,6 +59,24 @@ func ParseCommand(raw string) (*Command, error) {
 		cmd.Value = tokens[2]
 
 	case CmdGet, CmdDel:
+		if len(tokens) != 2 {
+			return nil, fmt.Errorf("%s must be: %s key", cmd.Type, cmd.Type)
+		}
+		cmd.Key = tokens[1]
+
+	case CmdExists:
+		if len(tokens) != 2 {
+			return nil, fmt.Errorf("%s must be: %s key", cmd.Type, cmd.Type)
+		}
+		cmd.Key = tokens[1]
+
+	case CmdKeys:
+		if len(tokens) != 2 {
+			return nil, fmt.Errorf("%s must be: %s pattern", cmd.Type, cmd.Type)
+		}
+		cmd.Value = tokens[1]
+
+	case CmdType:
 		if len(tokens) != 2 {
 			return nil, fmt.Errorf("%s must be: %s key", cmd.Type, cmd.Type)
 		}
