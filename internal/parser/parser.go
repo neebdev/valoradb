@@ -58,6 +58,13 @@ func ParseCommand(raw string) (*Command, error) {
 		cmd.Key = tokens[1]
 		cmd.Value = tokens[2]
 
+	case CmdMul:
+		if len(tokens) != 3 {
+			return nil, fmt.Errorf("%s must be: %s key value", cmd.Type, cmd.Type)
+		}
+		cmd.Key = tokens[1]
+		cmd.Value = tokens[2]
+
 	case CmdGet, CmdDel:
 		if len(tokens) != 2 {
 			return nil, fmt.Errorf("%s must be: %s key", cmd.Type, cmd.Type)
@@ -110,7 +117,7 @@ func InferType(value string) (ValueType, error) {
 }
 
 func ValidateCommand(cmd *Command) error {
-	usesValue := cmd.Type == CmdSet || cmd.Type == CmdAdd || cmd.Type == CmdSub
+	usesValue := cmd.Type == CmdSet || cmd.Type == CmdAdd || cmd.Type == CmdSub || cmd.Type == CmdMul
 	if !usesValue {
 		return nil
 	}
@@ -132,7 +139,7 @@ func ValidateCommand(cmd *Command) error {
 	}
 
 	switch cmd.Type {
-	case CmdAdd, CmdSub:
+	case CmdAdd, CmdSub, CmdMul:
 		if cmd.ValueType != TypeNumber {
 			return fmt.Errorf("%s supports only int or float types, not %s", cmd.Type, cmd.ValueType)
 		}
