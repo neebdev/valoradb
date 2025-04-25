@@ -1,5 +1,5 @@
 SET name "Alice";
-SET age 30 TYPE bool;
+SET age true;
 GET name;
 BEGIN;
 SET name "Bob";
