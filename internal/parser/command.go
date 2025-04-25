@@ -15,6 +15,7 @@ const (
 	CmdExists   CommandType = "EXISTS"
 	CmdKeys     CommandType = "KEYS"
 	CmdType     CommandType = "TYPE"
+	CmdMul      CommandType = "MUL"
 )
 
 type ValueType string
