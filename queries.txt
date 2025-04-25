@@ -1,0 +1,7 @@
+SET name "Alice";
+SET age 30 TYPE bool;
+GET name;
+BEGIN;
+SET name "Bob";
+COMMIT;
+GET name;
