@@ -45,7 +45,9 @@ func main() {
 			case parser.CmdGet:
 				val, _ := store.Get(cmd.Key)
 				fmt.Println(val.Data)
+			case parser.CmdKeys:
+				val, _ := store.Keys(cmd.Value)
+				fmt.Println(val)
 		}
-
 	}
 }
