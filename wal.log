@@ -1,0 +1,5 @@
+SET name Alice TYPE string
+GET name
+TYPE name
+DEL name
+EXISTS name
