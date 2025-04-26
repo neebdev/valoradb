@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"path/filepath"
 	"sync"
 
 	"github.com/neebdev/valoradb/internal/parser"
@@ -56,6 +58,191 @@ func (s *Store) Get(key string) (*Value, error) {
 	return &val, nil
 }
 
+func (s *Store) Add(key string, value Value) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	logLine := fmt.Sprintf("ADD %s %s TYPE %s\n", key, value.Data, value.ValueType)
+	if _, err := s.Wal.WriteString(logLine); err != nil {
+		return err
+	}
+	if err := s.Wal.Sync(); err != nil {
+		return err
+	}
+
+	existingVal, exists := s.Data[key]
+	if !exists {
+		return errors.New("key not found")
+	}
+
+	if existingVal.ValueType != parser.TypeNumber || value.ValueType != parser.TypeNumber {
+		return errors.New("ADD operation supports only number types")
+	}
+
+	existingNum, err := strconv.ParseFloat(existingVal.Data, 64)
+	if err != nil {
+		return fmt.Errorf("existing value is not a number: %v", err)
+	}
+
+	incomingNum, err := strconv.ParseFloat(value.Data, 64)
+	if err != nil {
+		return fmt.Errorf("incoming value is not a number: %v", err)
+	}
+	sum := existingNum + incomingNum
+
+	newVal := Value{
+		Data:      fmt.Sprintf("%f", sum),
+		ValueType: parser.TypeNumber,
+	}
+	s.Data[key] = newVal
+
+	return nil
+}
+
+func (s *Store) Sub(key string, value Value) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	logLine := fmt.Sprintf("ADD %s %s TYPE %s\n", key, value.Data, value.ValueType)
+	if _, err := s.Wal.WriteString(logLine); err != nil {
+		return err
+	}
+	if err := s.Wal.Sync(); err != nil {
+		return err
+	}
+	existingVal, exists := s.Data[key]
+	if !exists {
+		return errors.New("key not found")
+	}
+
+	if existingVal.ValueType != parser.TypeNumber || value.ValueType != parser.TypeNumber {
+		return errors.New("ADD operation supports only number types")
+	}
+
+	existingNum, err := strconv.ParseFloat(existingVal.Data, 64)
+	if err != nil {
+		return fmt.Errorf("existing value is not a number: %v", err)
+	}
+
+	incomingNum, err := strconv.ParseFloat(value.Data, 64)
+	if err != nil {
+		return fmt.Errorf("incoming value is not a number: %v", err)
+	}
+	sum := existingNum - incomingNum
+
+	newVal := Value{
+		Data:      fmt.Sprintf("%f", sum),
+		ValueType: parser.TypeNumber,
+	}
+	s.Data[key] = newVal
+
+	return nil
+}
+
+func (s *Store) Mul(key string, value Value) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	logLine := fmt.Sprintf("ADD %s %s TYPE %s\n", key, value.Data, value.ValueType)
+	if _, err := s.Wal.WriteString(logLine); err != nil {
+		return err
+	}
+	if err := s.Wal.Sync(); err != nil {
+		return err
+	}
+
+	existingVal, exists := s.Data[key]
+	if !exists {
+		return errors.New("key not found")
+	}
+
+	if existingVal.ValueType != parser.TypeNumber || value.ValueType != parser.TypeNumber {
+		return errors.New("ADD operation supports only number types")
+	}
+
+	existingNum, err := strconv.ParseFloat(existingVal.Data, 64)
+	if err != nil {
+		return fmt.Errorf("existing value is not a number: %v", err)
+	}
+
+	incomingNum, err := strconv.ParseFloat(value.Data, 64)
+	if err != nil {
+		return fmt.Errorf("incoming value is not a number: %v", err)
+	}
+	sum := existingNum * incomingNum
+
+	newVal := Value{
+		Data:      fmt.Sprintf("%f", sum),
+		ValueType: parser.TypeNumber,
+	}
+	s.Data[key] = newVal
+
+	return nil
+}
+
+func (s *Store) Div(key string, value Value) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	logLine := fmt.Sprintf("ADD %s %s TYPE %s\n", key, value.Data, value.ValueType)
+	if _, err := s.Wal.WriteString(logLine); err != nil {
+		return err
+	}
+	if err := s.Wal.Sync(); err != nil {
+		return err
+	}
+
+	existingVal, exists := s.Data[key]
+	if !exists {
+		return errors.New("key not found")
+	}
+
+	if existingVal.ValueType != parser.TypeNumber || value.ValueType != parser.TypeNumber {
+		return errors.New("ADD operation supports only number types")
+	}
+
+	existingNum, err := strconv.ParseFloat(existingVal.Data, 64)
+	if err != nil {
+		return fmt.Errorf("existing value is not a number: %v", err)
+	}
+
+	incomingNum, err := strconv.ParseFloat(value.Data, 64)
+	if err != nil {
+		return fmt.Errorf("incoming value is not a number: %v", err)
+	}
+	sum := existingNum / incomingNum
+
+	newVal := Value{
+		Data:      fmt.Sprintf("%f", sum),
+		ValueType: parser.TypeNumber,
+	}
+	s.Data[key] = newVal
+
+	return nil
+}
+
+func (s *Store) Keys(pattern string) ([]string, error) {
+	s.Mu.RLock()
+	defer s.Mu.RUnlock()
+
+	logLine := fmt.Sprintf("KEYS %s\n", pattern)
+	if _, err := s.Wal.WriteString(logLine); err != nil {
+		return nil, fmt.Errorf("failed to write to WAL: %v", err)
+	}
+	if err := s.Wal.Sync(); err != nil {
+		return nil, fmt.Errorf("failed to sync WAL: %v", err)
+	}
+
+	var matches []string
+	for key := range s.Data {
+		if ok, _ := filepath.Match(pattern, key); ok {
+			matches = append(matches, key)
+		}
+	}
+
+	return matches, nil
+}
+
 func (s *Store) Del(key string) error {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
@@ -67,13 +254,6 @@ func (s *Store) Del(key string) error {
 	}
 
 	logLine := fmt.Sprintf("DEL %s\n", key)
-	if _, err := s.Wal.WriteString(logLine); err != nil {
-		return err
-	}
-	if err := s.Wal.Sync(); err != nil {
-		return err
-	}
-
 	delete(s.Data, key)
 	return nil
 }
