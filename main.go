@@ -35,6 +35,7 @@ func main() {
 			continue
 		}
 		fmt.Printf(" Executing: %+v\n", cmd)
+
 		switch cmd.Type {
 		case parser.CmdSet:
 			value := engine.Value{
@@ -73,7 +74,19 @@ func main() {
 			}
 			store.Div(cmd.Key, value)
 
+		switch cmd.Type{
+			case parser.CmdSet:
+				value := engine.Value{
+					Data: cmd.Value,
+					ValueType: cmd.ValueType,
+				}
+				store.Set(cmd.Key, value)
+			case parser.CmdGet:
+				val, _ := store.Get(cmd.Key)
+				fmt.Println(val.Data)
+			case parser.CmdKeys:
+				val, _ := store.Keys(cmd.Value)
+				fmt.Println(val)
 		}
-
 	}
 }
