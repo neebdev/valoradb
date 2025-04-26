@@ -111,25 +111,25 @@ func InferType(value string) (ValueType, error) {
 
 func ValidateCommand(cmd *Command) error {
 	usesValue := cmd.Type == CmdSet || cmd.Type == CmdAdd || cmd.Type == CmdSub || cmd.Type == CmdDiv || cmd.Type == CmdMul
-  
 	if !usesValue {
 		return nil
 	}
 
+	inferredType, err := InferType(cmd.Value)
+	if err != nil {
+		return fmt.Errorf("invalid value: %s", cmd.Value)
+	}
+
 	if cmd.ValueType == "" {
-		t, err := InferType(cmd.Value)
-		if err != nil {
-			return err
-		}
-		cmd.ValueType = t
+		cmd.ValueType = inferredType
 	} else {
-		inferred, err := InferType(cmd.Value)
-		if err != nil {
-			return fmt.Errorf("invalid value: %s", cmd.Value)
+		if inferredType != cmd.ValueType {
+			return fmt.Errorf("type mismatch: value '%s' inferred as %s, but declared as %s", cmd.Value, inferredType, cmd.ValueType)
 		}
-		if inferred != cmd.ValueType {
-			return fmt.Errorf("type mismatch: value '%s' inferred as %s, but declared as %s", cmd.Value, inferred, cmd.ValueType)
-		}
+	}
+
+	if cmd.ValueType == TypeString {
+		cmd.Value = strings.Trim(cmd.Value, "\"")
 	}
 
 	switch cmd.Type {
@@ -138,9 +138,7 @@ func ValidateCommand(cmd *Command) error {
 			return fmt.Errorf("%s supports only int or float types, not %s", cmd.Type, cmd.ValueType)
 		}
 	case CmdSet:
-		if cmd.ValueType != TypeNumber &&
-			cmd.ValueType != TypeBool &&
-			cmd.ValueType != TypeString {
+		if cmd.ValueType != TypeNumber && cmd.ValueType != TypeBool && cmd.ValueType != TypeString {
 			return fmt.Errorf("SET supports only int, float, bool, string types, not %s", cmd.ValueType)
 		}
 	case CmdDiv:
@@ -150,7 +148,6 @@ func ValidateCommand(cmd *Command) error {
 		parsedVal, err := strconv.ParseFloat(cmd.Value, 64)
 		if err != nil {
 			return fmt.Errorf("invalid number value: %s", cmd.Value)
-
 		}
 		if parsedVal == 0 {
 			return fmt.Errorf("cannot divide %s by zero", cmd.Key)

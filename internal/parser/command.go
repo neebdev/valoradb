@@ -11,11 +11,11 @@ const (
 	CmdRollback CommandType = "ROLLBACK"
 	CmdAdd      CommandType = "ADD"
 	CmdSub      CommandType = "SUB"
+	CmdMul      CommandType = "MUL"
 	CmdDiv      CommandType = "DIV"
 	CmdExists   CommandType = "EXISTS"
 	CmdKeys     CommandType = "KEYS"
 	CmdType     CommandType = "TYPE"
-	CmdMul      CommandType = "MUL"
 )
 
 type ValueType string
