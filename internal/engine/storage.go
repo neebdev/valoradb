@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"path/filepath"
+	"strconv"
 	"sync"
 
 	"github.com/neebdev/valoradb/internal/parser"
@@ -247,13 +247,20 @@ func (s *Store) Del(key string) error {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
 
+	logLine := fmt.Sprintf("DEL %s\n", key)
+	if _, err := s.Wal.WriteString(logLine); err != nil {
+		return err
+	}
+	if err := s.Wal.Sync(); err != nil {
+		return err
+	}
+
 	_, exists := s.Data[key]
 	if !exists {
 		return fmt.Errorf("key '%s' not found", key)
 
 	}
 
-	logLine := fmt.Sprintf("DEL %s\n", key)
 	delete(s.Data, key)
 	return nil
 }
@@ -272,6 +279,7 @@ func (s *Store) Exists(key string) (bool, error) {
 	_, exists := s.Data[key]
 	return exists, nil
 }
+
 func (s *Store) Type(key string) (parser.ValueType, error) {
 	s.Mu.RLock()
 	defer s.Mu.RUnlock()

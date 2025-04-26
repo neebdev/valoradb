@@ -37,79 +37,71 @@ func main() {
 		fmt.Printf(" Executing: %+v\n", cmd)
     
 		switch cmd.Type {
-      case parser.CmdSet:
+    	  case parser.CmdSet:
+					value := engine.Value{
+						Data: cmd.Value,
+						ValueType: cmd.ValueType,
+					}
+					store.Set(cmd.Key, value)
+			case parser.CmdGet:
+					val, _ := store.Get(cmd.Key)
+					fmt.Println(val.Data)
+			case parser.CmdKeys:
+					val, _ := store.Keys(cmd.Value)
+					fmt.Println(val)
+			case parser.CmdDel:
+				err := store.Del(cmd.Key)
+				if err != nil {
+					fmt.Println("  ❌ Error:", err)
+				} else {
+					fmt.Printf("%v deleted successfully!", cmd.Key)
+				}
+
+			case parser.CmdExists:
+				exists, err := store.Exists(cmd.Key)
+				if err != nil {
+					fmt.Println("  ❌ Error:", err)
+				} else {
+					if exists {
+						fmt.Printf("✅ Key '%s' exists!\n", cmd.Key)
+					} else {
+						fmt.Printf("❌ Key '%s' does not exist.\n", cmd.Key)
+					}
+				}
+			case parser.CmdType:
+				valueType, err := store.Type(cmd.Key)
+				if err != nil {
+					fmt.Println("  ❌ Error:", err)
+				} else {
+					fmt.Printf("📦 Key '%s' has type '%s'\n", cmd.Key, valueType)
+				}
+
+			case parser.CmdAdd:
 				value := engine.Value{
-					Data: cmd.Value,
+					Data:      cmd.Value,
 					ValueType: cmd.ValueType,
 				}
-				store.Set(cmd.Key, value)
-			case parser.CmdGet:
-				val, _ := store.Get(cmd.Key)
-				fmt.Println(val.Data)
-			case parser.CmdKeys:
-				val, _ := store.Keys(cmd.Value)
-				fmt.Println(val)
-		case parser.CmdSet:
-			value := engine.Value{
-				Data:      cmd.Value,
-				ValueType: cmd.ValueType,
-			}
-			store.Set(cmd.Key, value)
-		case parser.CmdGet:
-			val, _ := store.Get(cmd.Key)
-			fmt.Println(val.Data)
-		case parser.CmdDel:
-			err := store.Del(cmd.Key)
-			if err != nil {
-				fmt.Println("  ❌ Error:", err)
-			} else {
-				fmt.Printf("%v deleted successfully!", cmd.Key)
-			}
+				store.Add(cmd.Key, value)
 
-		case parser.CmdExists:
-			exists, err := store.Exists(cmd.Key)
-			if err != nil {
-				fmt.Println("  ❌ Error:", err)
-			} else {
-				if exists {
-					fmt.Printf("✅ Key '%s' exists!\n", cmd.Key)
-				} else {
-					fmt.Printf("❌ Key '%s' does not exist.\n", cmd.Key)
+			case parser.CmdSub:
+				value := engine.Value{
+					Data:      cmd.Value,
+					ValueType: cmd.ValueType,
 				}
-			}
-		case parser.CmdType:
-			valueType, err := store.Type(cmd.Key)
-			if err != nil {
-				fmt.Println("  ❌ Error:", err)
-			} else {
-				fmt.Printf("📦 Key '%s' has type '%s'\n", cmd.Key, valueType)
-			}
+				store.Sub(cmd.Key, value)
 
-		case parser.CmdAdd:
-			value := engine.Value{
-				Data:      cmd.Value,
-				ValueType: cmd.ValueType,
-			}
-			store.Add(cmd.Key, value)
-
-		case parser.CmdSub:
-			value := engine.Value{
-				Data:      cmd.Value,
-				ValueType: cmd.ValueType,
-			}
-			store.Sub(cmd.Key, value)
-
-		case parser.CmdMul:
-			value := engine.Value{
-				Data:      cmd.Value,
-				ValueType: cmd.ValueType,
-			}
-			store.Mul(cmd.Key, value)
-		case parser.CmdDiv:
-			value := engine.Value{
-				Data:      cmd.Value,
-				ValueType: cmd.ValueType,
-			}
-			store.Div(cmd.Key, value)
+			case parser.CmdMul:
+				value := engine.Value{
+					Data:      cmd.Value,
+					ValueType: cmd.ValueType,
+				}
+				store.Mul(cmd.Key, value)
+			case parser.CmdDiv:
+				value := engine.Value{
+					Data:      cmd.Value,
+					ValueType: cmd.ValueType,
+				}
+				store.Div(cmd.Key, value)
+		}
 	}
 }
