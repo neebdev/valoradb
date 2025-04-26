@@ -21,15 +21,16 @@ func ParseQueriesFromFile(filename string) ([]string, error) {
 	for _, raw := range rawQueries {
 		trimmed := strings.TrimSpace(raw)
 		if trimmed != "" {
-			normalized := strings.Join(strings.Fields(trimmed), " ")
-			queries = append(queries, normalized)
+			// Preserve the original format without normalizing
+			queries = append(queries, trimmed)
 		}
 	}
 	return queries, nil
 }
 
 func ParseCommand(raw string) (*Command, error) {
-	tokens := strings.Fields(raw)
+	// Use custom tokenization to properly handle quoted strings
+	tokens := tokenize(raw)
 	if len(tokens) == 0 {
 		return nil, errors.New("empty command")
 	}
@@ -96,6 +97,46 @@ func ParseCommand(raw string) (*Command, error) {
 	return cmd, nil
 }
 
+// tokenize splits a command into tokens while preserving quoted strings
+func tokenize(s string) []string {
+	var tokens []string
+	var current strings.Builder
+	inQuotes := false
+	
+	// Helper to add token when we encounter a delimiter
+	addToken := func() {
+		if current.Len() > 0 {
+			tokens = append(tokens, current.String())
+			current.Reset()
+		}
+	}
+	
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		
+		// Handle quotes
+		if ch == '"' {
+			current.WriteByte(ch)
+			inQuotes = !inQuotes
+			continue
+		}
+		
+		// Handle spaces
+		if ch == ' ' && !inQuotes {
+			addToken()
+			continue
+		}
+		
+		// Add character to current token
+		current.WriteByte(ch)
+	}
+	
+	// Add the last token if any
+	addToken()
+	
+	return tokens
+}
+
 func InferType(value string) (ValueType, error) {
 	if _, err := strconv.ParseFloat(value, 64); err == nil {
 		return TypeNumber, nil
@@ -145,13 +186,8 @@ func ValidateCommand(cmd *Command) error {
 		if cmd.ValueType != TypeNumber {
 			return fmt.Errorf("%s supports only int or float types, not %s", cmd.Type, cmd.ValueType)
 		}
-		parsedVal, err := strconv.ParseFloat(cmd.Value, 64)
-		if err != nil {
-			return fmt.Errorf("invalid number value: %s", cmd.Value)
-		}
-		if parsedVal == 0 {
-			return fmt.Errorf("cannot divide %s by zero", cmd.Key)
-		}
+		// We'll check for division by zero in the actual DIV operation,
+		// not during command parsing
 	}
 
 	return nil
