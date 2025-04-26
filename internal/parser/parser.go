@@ -51,14 +51,7 @@ func ParseCommand(raw string) (*Command, error) {
 			cmd.ValueType = ValueType(strings.ToLower(tokens[4]))
 		}
 
-	case CmdAdd, CmdSub, CmdDiv:
-		if len(tokens) != 3 {
-			return nil, fmt.Errorf("%s must be: %s key value", cmd.Type, cmd.Type)
-		}
-		cmd.Key = tokens[1]
-		cmd.Value = tokens[2]
-
-	case CmdMul:
+	case CmdAdd, CmdSub, CmdDiv, CmdMul:
 		if len(tokens) != 3 {
 			return nil, fmt.Errorf("%s must be: %s key value", cmd.Type, cmd.Type)
 		}
