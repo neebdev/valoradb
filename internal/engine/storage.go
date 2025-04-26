@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 
 	"github.com/neebdev/valoradb/internal/parser"
@@ -15,11 +16,10 @@ type Value struct {
 }
 
 type Store struct {
-	Data    map[string]Value
-	Wal     *os.File
-	Mu      sync.RWMutex
+	Data map[string]Value
+	Wal  *os.File
+	Mu   sync.RWMutex
 }
-
 
 func (s *Store) Set(key string, value Value) error {
 	s.Mu.Lock()
@@ -50,9 +50,173 @@ func (s *Store) Get(key string) (*Value, error) {
 	}
 
 	val, exists := s.Data[key]
-	if !exists{
+	if !exists {
 		err := errors.New("key not found")
 		return nil, err
 	}
 	return &val, nil
+}
+
+func (s *Store) Add(key string, value Value) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	logLine := fmt.Sprintf("ADD %s %s TYPE %s\n", key, value.Data, value.ValueType)
+	if _, err := s.Wal.WriteString(logLine); err != nil {
+		return err
+	}
+	if err := s.Wal.Sync(); err != nil {
+		return err
+	}
+
+	existingVal, exists := s.Data[key]
+	if !exists {
+		return errors.New("key not found")
+	}
+
+	if existingVal.ValueType != parser.TypeNumber || value.ValueType != parser.TypeNumber {
+		return errors.New("ADD operation supports only number types")
+	}
+
+	existingNum, err := strconv.ParseFloat(existingVal.Data, 64)
+	if err != nil {
+		return fmt.Errorf("existing value is not a number: %v", err)
+	}
+
+	incomingNum, err := strconv.ParseFloat(value.Data, 64)
+	if err != nil {
+		return fmt.Errorf("incoming value is not a number: %v", err)
+	}
+	sum := existingNum + incomingNum
+
+	newVal := Value{
+		Data:      fmt.Sprintf("%f", sum),
+		ValueType: parser.TypeNumber,
+	}
+	s.Data[key] = newVal
+
+	return nil
+}
+
+func (s *Store) Sub(key string, value Value) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	logLine := fmt.Sprintf("ADD %s %s TYPE %s\n", key, value.Data, value.ValueType)
+	if _, err := s.Wal.WriteString(logLine); err != nil {
+		return err
+	}
+	if err := s.Wal.Sync(); err != nil {
+		return err
+	}
+
+	existingVal, exists := s.Data[key]
+	if !exists {
+		return errors.New("key not found")
+	}
+
+	if existingVal.ValueType != parser.TypeNumber || value.ValueType != parser.TypeNumber {
+		return errors.New("ADD operation supports only number types")
+	}
+
+	existingNum, err := strconv.ParseFloat(existingVal.Data, 64)
+	if err != nil {
+		return fmt.Errorf("existing value is not a number: %v", err)
+	}
+
+	incomingNum, err := strconv.ParseFloat(value.Data, 64)
+	if err != nil {
+		return fmt.Errorf("incoming value is not a number: %v", err)
+	}
+	sum := existingNum - incomingNum
+
+	newVal := Value{
+		Data:      fmt.Sprintf("%f", sum),
+		ValueType: parser.TypeNumber,
+	}
+	s.Data[key] = newVal
+
+	return nil
+}
+
+func (s *Store) Mul(key string, value Value) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	logLine := fmt.Sprintf("ADD %s %s TYPE %s\n", key, value.Data, value.ValueType)
+	if _, err := s.Wal.WriteString(logLine); err != nil {
+		return err
+	}
+	if err := s.Wal.Sync(); err != nil {
+		return err
+	}
+
+	existingVal, exists := s.Data[key]
+	if !exists {
+		return errors.New("key not found")
+	}
+
+	if existingVal.ValueType != parser.TypeNumber || value.ValueType != parser.TypeNumber {
+		return errors.New("ADD operation supports only number types")
+	}
+
+	existingNum, err := strconv.ParseFloat(existingVal.Data, 64)
+	if err != nil {
+		return fmt.Errorf("existing value is not a number: %v", err)
+	}
+
+	incomingNum, err := strconv.ParseFloat(value.Data, 64)
+	if err != nil {
+		return fmt.Errorf("incoming value is not a number: %v", err)
+	}
+	sum := existingNum * incomingNum
+
+	newVal := Value{
+		Data:      fmt.Sprintf("%f", sum),
+		ValueType: parser.TypeNumber,
+	}
+	s.Data[key] = newVal
+
+	return nil
+}
+
+func (s *Store) Div(key string, value Value) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+
+	logLine := fmt.Sprintf("ADD %s %s TYPE %s\n", key, value.Data, value.ValueType)
+	if _, err := s.Wal.WriteString(logLine); err != nil {
+		return err
+	}
+	if err := s.Wal.Sync(); err != nil {
+		return err
+	}
+
+	existingVal, exists := s.Data[key]
+	if !exists {
+		return errors.New("key not found")
+	}
+
+	if existingVal.ValueType != parser.TypeNumber || value.ValueType != parser.TypeNumber {
+		return errors.New("ADD operation supports only number types")
+	}
+
+	existingNum, err := strconv.ParseFloat(existingVal.Data, 64)
+	if err != nil {
+		return fmt.Errorf("existing value is not a number: %v", err)
+	}
+
+	incomingNum, err := strconv.ParseFloat(value.Data, 64)
+	if err != nil {
+		return fmt.Errorf("incoming value is not a number: %v", err)
+	}
+	sum := existingNum / incomingNum
+
+	newVal := Value{
+		Data:      fmt.Sprintf("%f", sum),
+		ValueType: parser.TypeNumber,
+	}
+	s.Data[key] = newVal
+
+	return nil
 }
