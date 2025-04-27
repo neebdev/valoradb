@@ -3,11 +3,13 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/neebdev/valoradb/internal/config"
 	"github.com/neebdev/valoradb/internal/parser"
 	"github.com/neebdev/valoradb/internal/wal"
 )
@@ -46,10 +48,20 @@ type Store struct {
 }
 
 // Init initializes a new store
-func NewStore(walPath string) (*Store, error) {
-	// Create WAL options with default settings
+func NewStore(cfg *config.Config) (*Store, error) {
+	// Create WAL options with settings from config
 	walOpts := wal.DefaultWALOptions()
-	walOpts.Dir = filepath.Dir(walPath)
+	
+	// Use the directory from config
+	walOpts.Dir = cfg.WAL.Directory
+	walOpts.SegmentSize = cfg.WAL.SegmentSize
+	
+	fmt.Printf("Initializing database with WAL directory: %s\n", walOpts.Dir)
+	
+	// Ensure the WAL directory exists
+	if err := os.MkdirAll(walOpts.Dir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create WAL directory: %v", err)
+	}
 	
 	// Open the WAL
 	walInstance, err := wal.OpenWAL(walOpts)
@@ -412,6 +424,11 @@ func (s *Store) RecoverFromWAL() error {
 	// Create a WAL reader
 	reader, err := s.Wal.Reader()
 	if err != nil {
+		// Check if this is because the WAL file doesn't exist yet
+		if os.IsNotExist(err) {
+			fmt.Println("No WAL file found. Starting with fresh database.")
+			return nil
+		}
 		return fmt.Errorf("failed to create WAL reader: %v", err)
 	}
 	defer reader.Close()
@@ -435,6 +452,15 @@ func (s *Store) RecoverFromWAL() error {
 			if err.Error() == "EOF" {
 				break
 			}
+			
+			// Handle corrupt WAL records by stopping recovery but not failing
+			if strings.Contains(err.Error(), "invalid record magic number") || 
+			   strings.Contains(err.Error(), "corrupted WAL record") {
+				fmt.Printf("Corrupt WAL detected: %v\n", err)
+				fmt.Println("Recovery incomplete, some transactions may be lost.")
+				break
+			}
+			
 			return fmt.Errorf("error reading WAL record: %v", err)
 		}
 		
@@ -504,8 +530,13 @@ func (s *Store) RecoverFromWAL() error {
 		}
 	}
 	
-	fmt.Printf("Recovery complete: processed %d WAL records, recovered %d keys\n", 
-		recordCount, len(s.Data))
+	if recordCount > 0 {
+		fmt.Printf("Recovery complete: processed %d WAL records, recovered %d keys\n", 
+			recordCount, len(s.Data))
+	} else {
+		fmt.Println("No records found in WAL. Starting with empty database.")
+	}
+	
 	return nil
 }
 
@@ -521,8 +552,12 @@ func (s *Store) Clear() error {
 		// Continue anyway
 	}
 
-	// Create a new WAL file
+	// Get the current WAL directory
+	walDir := s.Wal.GetDirectory()
+
+	// Create a new WAL file with the same options
 	walOpts := wal.DefaultWALOptions()
+	walOpts.Dir = walDir
 	
 	newWal, err := wal.OpenWAL(walOpts)
 	if err != nil {

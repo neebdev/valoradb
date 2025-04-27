@@ -6,22 +6,23 @@ import (
 	"os"
 	"strings"
 
+	"github.com/neebdev/valoradb/internal/config"
 	"github.com/neebdev/valoradb/internal/engine"
 	"github.com/neebdev/valoradb/internal/parser"
 	"github.com/neebdev/valoradb/internal/transaction"
 )
 
 type Client struct {
-	store      *engine.Store
-	txManager  *transaction.TransactionManager
-	walPath    string
+	store         *engine.Store
+	txManager     *transaction.TransactionManager
+	config        *config.Config
 	inTransaction bool
-	threadID   uint64
+	threadID      uint64
 }
 
 // NewClient creates a new client instance
-func NewClient(walPath string) (*Client, error) {
-	store, err := engine.NewStore(walPath)
+func NewClient(cfg *config.Config) (*Client, error) {
+	store, err := engine.NewStore(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize store: %v", err)
 	}
@@ -37,17 +38,17 @@ func NewClient(walPath string) (*Client, error) {
 	txManager := transaction.NewTransactionManager(store)
 
 	return &Client{
-		store:      store,
-		txManager:  txManager,
-		walPath:    walPath,
+		store:         store,
+		txManager:     txManager,
+		config:        cfg,
 		inTransaction: false,
-		threadID:   1, // Using a simple thread ID for demo purposes
+		threadID:      1, // Using a simple thread ID for demo purposes
 	}, nil
 }
 
 // Start begins the interactive shell
 func (c *Client) Start() {
-	fmt.Println("Welcome to ValoraDĂ Interactive Shell")
+	fmt.Println("Welcome to ValoraDB Interactive Shell")
 	fmt.Println("Type 'EXIT' or 'exit' to leave the shell")
 	fmt.Println("--------------------------------")
 
@@ -89,10 +90,6 @@ func (c *Client) executeCommand(rawQuery string) {
 		return
 	}
 
-	if cmd.Type == parser.CmdSet || cmd.Type == parser.CmdAdd || cmd.Type == parser.CmdSub || cmd.Type == parser.CmdMul || cmd.Type == parser.CmdDiv {
-		fmt.Printf("Debug - Key: %s, Value: %s, ValueType: %s\n", cmd.Key, cmd.Value, cmd.ValueType)
-	}
-	
 	switch cmd.Type {
 	case parser.CmdBegin:
 		if c.inTransaction {

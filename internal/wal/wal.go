@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,7 +44,7 @@ type WAL struct {
 // Options contains configuration options for the WAL
 type Options struct {
 	Dir           string // Base directory for WAL files
-	DBName        string // Database name for organizing WAL files
+	DBName        string // Database name for organizing WAL files (deprecated)
 	SegmentSize   int64  // Max size of each WAL segment in bytes
 	FlushInterval time.Duration
 	QueueSize     int
@@ -54,8 +53,8 @@ type Options struct {
 // DefaultWALOptions returns default WAL options
 func DefaultWALOptions() Options {
 	return Options{
-		Dir:           "data",
-		DBName:        "default",
+		Dir:           "data/wal", // Simplified, single directory for WAL files
+		DBName:        "",         // No longer used
 		SegmentSize:   16 * 1024 * 1024, // 16MB segments
 		FlushInterval: 100 * time.Millisecond,
 		QueueSize:     1000,
@@ -73,30 +72,14 @@ func OpenWAL(opts Options) (*WAL, error) {
 	if opts.QueueSize <= 0 {
 		opts.QueueSize = DefaultWALOptions().QueueSize
 	}
-	if opts.DBName == "" {
-		opts.DBName = DefaultWALOptions().DBName
-	}
 	
-	// Create the base directory if it doesn't exist
+	// Create the WAL directory if it doesn't exist
 	if err := os.MkdirAll(opts.Dir, 0755); err != nil {
 		return nil, err
 	}
 	
-	// Create the WAL directory structure: data/<dbname>/wal
-	walDir := filepath.Join(opts.Dir, opts.DBName, "wal")
-	if err := os.MkdirAll(walDir, 0755); err != nil {
-		return nil, err
-	}
-	
-	// Create date-based subdirectory (YYYY-MM)
-	now := time.Now()
-	dateDir := filepath.Join(walDir, fmt.Sprintf("%04d-%02d", now.Year(), now.Month()))
-	if err := os.MkdirAll(dateDir, 0755); err != nil {
-		return nil, err
-	}
-	
 	w := &WAL{
-		dir:           dateDir,
+		dir:           opts.Dir,
 		segmentSize:   opts.SegmentSize,
 		flushInterval: opts.FlushInterval,
 		stopCh:        make(chan struct{}),
@@ -124,62 +107,17 @@ func OpenWAL(opts Options) (*WAL, error) {
 
 // recoverMaxLSN reads existing WAL files to find the maximum LSN
 func (w *WAL) recoverMaxLSN() (uint64, error) {
-	// Get all segment files in the current month directory
+	// Get all segment files in the WAL directory
 	files, err := filepath.Glob(filepath.Join(w.dir, "wal-*.log"))
 	if err != nil {
 		return 0, err
 	}
 	
 	if len(files) == 0 {
-		// If no files in current month, check previous months
-		baseDir := filepath.Dir(w.dir) // Go up one level to wal directory
-		dateDirs, err := findDateDirs(baseDir)
-		if err != nil {
-			return 0, nil // Assume no existing WAL files on error
-		}
-		
-		// Sort date directories in descending order
-		sort.Sort(sort.Reverse(sort.StringSlice(dateDirs)))
-		
-		for _, dateDir := range dateDirs {
-			if dateDir == filepath.Base(w.dir) {
-				continue // Skip current month (already checked)
-			}
-			
-			prevFiles, err := filepath.Glob(filepath.Join(baseDir, dateDir, "wal-*.log"))
-			if err != nil {
-				continue
-			}
-			
-			if len(prevFiles) > 0 {
-				// Found files in a previous month, process them
-				return findMaxLSNFromFiles(prevFiles)
-			}
-		}
-		
 		return 0, nil // No existing WAL files
 	}
 	
 	return findMaxLSNFromFiles(files)
-}
-
-// findDateDirs returns all date-formatted directories in the given base directory
-func findDateDirs(baseDir string) ([]string, error) {
-	entries, err := os.ReadDir(baseDir)
-	if err != nil {
-		return nil, err
-	}
-	
-	var dateDirs []string
-	dateRegex := regexp.MustCompile(`^\d{4}-\d{2}$`)
-	
-	for _, entry := range entries {
-		if entry.IsDir() && dateRegex.MatchString(entry.Name()) {
-			dateDirs = append(dateDirs, entry.Name())
-		}
-	}
-	
-	return dateDirs, nil
 }
 
 // findMaxLSNFromFiles examines a list of WAL files and returns the maximum LSN
@@ -476,8 +414,45 @@ func (w *WAL) Checkpoint(keyCount uint32) (LogSequenceNumber, error) {
 	return checkpointLSN, nil
 }
 
-// Reader returns a reader for WAL recovery
+// Exists checks if any WAL files exist in the directory
+func (w *WAL) Exists() bool {
+	// Use RLock to safely access dir
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	
+	if w.closed {
+		return false
+	}
+	
+	// Look for any WAL files in the directory
+	files, err := filepath.Glob(filepath.Join(w.dir, "wal-*.log"))
+	if err != nil {
+		return false
+	}
+	
+	return len(files) > 0
+}
+
+// Reader creates a new WAL reader for recovery
 func (w *WAL) Reader() (*Reader, error) {
+	// Use RLock to safely access dir
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	
+	if w.closed {
+		return nil, ErrWALClosed
+	}
+	
+	// Check if any WAL files exist
+	files, err := filepath.Glob(filepath.Join(w.dir, "wal-*.log"))
+	if err != nil {
+		return nil, err
+	}
+	
+	if len(files) == 0 {
+		return nil, os.ErrNotExist
+	}
+	
 	return NewWALReader(w.dir)
 }
 
@@ -491,43 +466,26 @@ type Reader struct {
 
 // NewWALReader creates a new WAL reader
 func NewWALReader(dir string) (*Reader, error) {
-	// Get the base WAL directory
-	baseDir := filepath.Dir(dir) // Go up one level to the wal directory
-	
-	// Find all date directories
-	dateDirs, err := findDateDirs(baseDir)
+	// Look for WAL files directly in the specified directory
+	files, err := filepath.Glob(filepath.Join(dir, "wal-*.log"))
 	if err != nil {
 		return nil, err
 	}
 	
-	// Sort date directories in ascending order (oldest first)
-	sort.Strings(dateDirs)
-	
-	// Get all WAL files from all date directories
-	var allFiles []string
-	for _, dateDir := range dateDirs {
-		dateWalDir := filepath.Join(baseDir, dateDir)
-		files, err := filepath.Glob(filepath.Join(dateWalDir, "wal-*.log"))
-		if err != nil {
-			continue
-		}
-		allFiles = append(allFiles, files...)
-	}
-	
-	if len(allFiles) == 0 {
+	if len(files) == 0 {
 		return nil, ErrInvalidWAL
 	}
 	
 	// Sort files by LSN embedded in filename
-	sort.Slice(allFiles, func(i, j int) bool {
-		iLSN := extractLSNFromFilename(allFiles[i])
-		jLSN := extractLSNFromFilename(allFiles[j])
+	sort.Slice(files, func(i, j int) bool {
+		iLSN := extractLSNFromFilename(files[i])
+		jLSN := extractLSNFromFilename(files[j])
 		return iLSN < jLSN
 	})
 	
 	reader := &Reader{
 		dir:       dir,
-		files:     allFiles,
+		files:     files,
 		fileIndex: 0,
 	}
 	
@@ -814,21 +772,6 @@ func (w *WAL) RotateLog() error {
 		return err
 	}
 	
-	// Check if we need to rotate to a new month directory
-	now := time.Now()
-	currentMonthDir := filepath.Base(w.dir)
-	expectedMonthDir := fmt.Sprintf("%04d-%02d", now.Year(), now.Month())
-	
-	if currentMonthDir != expectedMonthDir {
-		// Create a new month directory
-		baseDir := filepath.Dir(w.dir) // Get the wal directory
-		newDir := filepath.Join(baseDir, expectedMonthDir)
-		if err := os.MkdirAll(newDir, 0755); err != nil {
-			return err
-		}
-		w.dir = newDir
-	}
-	
 	// Create a new segment
 	segmentID := w.currentLSN.Add(1)
 	segmentPath := filepath.Join(w.dir, fmt.Sprintf("wal-%020d.log", segmentID))
@@ -854,57 +797,27 @@ func (w *WAL) TruncateBefore(segmentID uint64) error {
 		return fmt.Errorf("cannot truncate current or future segments")
 	}
 	
-	// Get the base WAL directory
-	baseDir := filepath.Dir(w.dir) // Go up one level to the wal directory
-	
-	// Find all date directories
-	dateDirs, err := findDateDirs(baseDir)
+	// Get all segment files in the WAL directory
+	files, err := filepath.Glob(filepath.Join(w.dir, "wal-*.log"))
 	if err != nil {
 		return err
 	}
 	
-	for _, dateDir := range dateDirs {
-		dir := filepath.Join(baseDir, dateDir)
-		entries, err := os.ReadDir(dir)
+	for _, filePath := range files {
+		// Extract segment ID from filename
+		baseName := filepath.Base(filePath)
+		lsnStr := strings.TrimPrefix(baseName, "wal-")
+		lsnStr = strings.TrimSuffix(lsnStr, ".log")
+		
+		id, err := strconv.ParseUint(lsnStr, 10, 64)
 		if err != nil {
 			continue
 		}
 		
-		for _, entry := range entries {
-			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".log") && strings.HasPrefix(entry.Name(), "wal-") {
-				// Extract segment ID from filename
-				baseName := entry.Name()
-				lsnStr := strings.TrimPrefix(baseName, "wal-")
-				lsnStr = strings.TrimSuffix(lsnStr, ".log")
-				
-				id, err := strconv.ParseUint(lsnStr, 10, 64)
-				if err != nil {
-					continue
-				}
-				
-				// If segment ID is less than the given ID, remove the file
-				if id < segmentID {
-					filePath := filepath.Join(dir, entry.Name())
-					if err := os.Remove(filePath); err != nil {
-						return err
-					}
-				}
-			}
-		}
-		
-		// Check if the directory is now empty and remove it if it's not the current month
-		if dateDir != filepath.Base(w.dir) {
-			entries, err := os.ReadDir(filepath.Join(baseDir, dateDir))
-			if err != nil {
-				continue
-			}
-			
-			if len(entries) == 0 {
-				// Directory is empty, remove it
-				if err := os.Remove(filepath.Join(baseDir, dateDir)); err != nil {
-					// Non-fatal error, just continue
-					continue
-				}
+		// If segment ID is less than the given ID, remove the file
+		if id < segmentID {
+			if err := os.Remove(filePath); err != nil {
+				return err
 			}
 		}
 	}
@@ -915,4 +828,11 @@ func (w *WAL) TruncateBefore(segmentID uint64) error {
 // LastTransactionID returns the last assigned transaction ID
 func (w *WAL) LastTransactionID() TransactionID {
 	return TransactionID(w.lastTxID)
+}
+
+// GetDirectory returns the directory where the WAL is stored
+func (w *WAL) GetDirectory() string {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.dir
 } 

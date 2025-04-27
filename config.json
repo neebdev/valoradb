@@ -1,0 +1,6 @@
+{
+  "wal": {
+    "directory": "./data/wal",
+    "segmentSize": 16777216
+  }
+}
