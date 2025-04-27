@@ -20,9 +20,31 @@ func ParseQueriesFromFile(filename string) ([]string, error) {
 	var queries []string
 	for _, raw := range rawQueries {
 		trimmed := strings.TrimSpace(raw)
-		if trimmed != "" {
+		if trimmed == "" {
+			continue
+		}
+		
+		// Remove SQL-style comments (-- comment)
+		lines := strings.Split(trimmed, "\n")
+		var cleanedLines []string
+		for _, line := range lines {
+			// If line starts with comment, skip it
+			if strings.HasPrefix(strings.TrimSpace(line), "--") {
+				continue
+			}
+			// If line contains comment, remove it
+			if idx := strings.Index(line, "--"); idx >= 0 {
+				line = line[:idx]
+			}
+			if strings.TrimSpace(line) != "" {
+				cleanedLines = append(cleanedLines, line)
+			}
+		}
+		
+		cleanedQuery := strings.Join(cleanedLines, " ")
+		if cleanedQuery != "" {
 			// Preserve the original format without normalizing
-			queries = append(queries, trimmed)
+			queries = append(queries, cleanedQuery)
 		}
 	}
 	return queries, nil
@@ -83,7 +105,8 @@ func ParseCommand(raw string) (*Command, error) {
 		}
 		cmd.Key = tokens[1]
 
-	case CmdBegin, CmdCommit, CmdRollback:
+	case CmdBegin, CmdCommit, CmdRollback, CmdClear:
+		// These commands don't require additional arguments
 
 	default:
 		return nil, errors.New("unknown command: " + string(cmd.Type))

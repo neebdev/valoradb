@@ -3,48 +3,33 @@ package engine
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/neebdev/valoradb/internal/parser"
+	"github.com/neebdev/valoradb/internal/wal"
 )
 
 // Common error messages
 var (
 	ErrKeyNotFound        = errors.New("key not found")
-	ErrTypeNotNumber      = errors.New("operation supports only number types")
-	ErrDivideByZero       = errors.New("division by zero")
+	ErrTypeNotNumber      = errors.New("key is not a number")
+	ErrDivideByZero       = errors.New("cannot divide by zero")
 	ErrWalWriteFailed     = errors.New("failed to write to WAL")
 	ErrWalSyncFailed      = errors.New("failed to sync WAL")
 	ErrInvalidNumberValue = errors.New("invalid number value")
 )
 
-// Helper function to convert string to float64
+// Helper function to convert a string to a float64
 func toFloat64(s string) (float64, error) {
-	val, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, fmt.Errorf("%w: %s", ErrInvalidNumberValue, s)
-	}
-	return val, nil
+	return strconv.ParseFloat(s, 64)
 }
 
-// Helper function to format float result
+// Helper function to format a float64 as a string
 func formatFloat(val float64) string {
-	return fmt.Sprintf("%f", val)
-}
-
-// Helper function to write to WAL
-func writeToWal(file *os.File, format string, args ...interface{}) error {
-	logLine := fmt.Sprintf(format, args...)
-	if _, err := file.WriteString(logLine); err != nil {
-		return fmt.Errorf("%w: %v", ErrWalWriteFailed, err)
-	}
-	if err := file.Sync(); err != nil {
-		return fmt.Errorf("%w: %v", ErrWalSyncFailed, err)
-	}
-	return nil
+	return strconv.FormatFloat(val, 'f', -1, 64)
 }
 
 type Value struct {
@@ -57,20 +42,25 @@ type Store struct {
 	KeyLocks   map[string]*sync.RWMutex // Fine-grained locks for each key
 	GlobalLock sync.RWMutex             // Lock for operations on the store itself
 	WalLock    sync.Mutex               // Lock for WAL operations 
-	Wal        *os.File
+	Wal        *wal.WAL
 }
 
 // Init initializes a new store
 func NewStore(walPath string) (*Store, error) {
-	walFile, err := os.OpenFile(walPath, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0644)
+	// Create WAL options with default settings
+	walOpts := wal.DefaultWALOptions()
+	walOpts.Dir = filepath.Dir(walPath)
+	
+	// Open the WAL
+	walInstance, err := wal.OpenWAL(walOpts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create/open WAL file: %v", err)
+		return nil, fmt.Errorf("failed to open WAL: %v", err)
 	}
 	
 	return &Store{
 		Data:       make(map[string]Value),
 		KeyLocks:   make(map[string]*sync.RWMutex),
-		Wal:        walFile,
+		Wal:        walInstance,
 	}, nil
 }
 
@@ -99,17 +89,36 @@ func (s *Store) getKeyLock(key string) *sync.RWMutex {
 	return lock
 }
 
-// writeToWalSafe safely writes to the WAL file with proper locking
-func (s *Store) writeToWalSafe(format string, args ...interface{}) error {
+// writeToWAL safely writes a record to the WAL
+func (s *Store) writeToWAL(recordType wal.RecordType, key string, value *Value) error {
 	s.WalLock.Lock()
 	defer s.WalLock.Unlock()
+
+	// Prepare payload data
+	var payload []byte
+	if value != nil {
+		// Format: key + null terminator + value + null terminator + value type
+		payload = []byte(key + "\x00" + value.Data + "\x00" + string(value.ValueType))
+	} else {
+		// Just the key for operations like GET, DEL, etc.
+		payload = []byte(key)
+	}
 	
-	return writeToWal(s.Wal, format, args...)
+	// Create the record
+	record := wal.NewRecord(uint8(recordType), 0, payload)
+	
+	// Append to WAL
+	_, err := s.Wal.AppendRecord(record)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrWalWriteFailed, err)
+	}
+	
+	return nil
 }
 
 func (s *Store) Set(key string, value Value) error {
-	// First, log the operation
-	if err := s.writeToWalSafe("SET %s %s TYPE %s\n", key, value.Data, value.ValueType); err != nil {
+	// First, log the operation to WAL
+	if err := s.writeToWAL(wal.RecordSet, key, &value); err != nil {
 		return err
 	}
 
@@ -120,7 +129,7 @@ func (s *Store) Set(key string, value Value) error {
 	keyLock.Lock()
 	defer keyLock.Unlock()
 	
-	// Global read lock to access the map
+	// Global lock to access the map
 	s.GlobalLock.Lock()
 	defer s.GlobalLock.Unlock()
 
@@ -129,8 +138,8 @@ func (s *Store) Set(key string, value Value) error {
 }
 
 func (s *Store) Get(key string) (*Value, error) {
-	// First, log the operation
-	if err := s.writeToWalSafe("GET %s\n", key); err != nil {
+	// First, log the operation to WAL (read operations are also logged)
+	if err := s.writeToWAL(wal.RecordNoop, key, nil); err != nil {
 		return nil, err
 	}
 
@@ -156,13 +165,11 @@ func (s *Store) Get(key string) (*Value, error) {
 }
 
 func (s *Store) Add(key string, value Value) error {
+	// Lock for this operation
 	s.GlobalLock.Lock()
 	defer s.GlobalLock.Unlock()
 
-	if err := s.writeToWalSafe("ADD %s %s TYPE %s\n", key, value.Data, value.ValueType); err != nil {
-		return err
-	}
-
+	// Get the current value first
 	existingVal, exists := s.Data[key]
 	if !exists {
 		return ErrKeyNotFound
@@ -183,22 +190,26 @@ func (s *Store) Add(key string, value Value) error {
 	}
 	
 	result := existingNum + incomingNum
-
-	s.Data[key] = Value{
+	
+	// Create the new value
+	newValue := Value{
 		Data:      formatFloat(result),
 		ValueType: parser.TypeNumber,
 	}
 
+	// Log the operation to WAL
+	if err := s.writeToWAL(wal.RecordAdd, key, &newValue); err != nil {
+		return err
+	}
+
+	// Update the data
+	s.Data[key] = newValue
 	return nil
 }
 
 func (s *Store) Sub(key string, value Value) error {
 	s.GlobalLock.Lock()
 	defer s.GlobalLock.Unlock()
-
-	if err := s.writeToWalSafe("SUB %s %s TYPE %s\n", key, value.Data, value.ValueType); err != nil {
-		return err
-	}
 
 	existingVal, exists := s.Data[key]
 	if !exists {
@@ -220,22 +231,26 @@ func (s *Store) Sub(key string, value Value) error {
 	}
 	
 	result := existingNum - incomingNum
-
-	s.Data[key] = Value{
+	
+	// Create the new value
+	newValue := Value{
 		Data:      formatFloat(result),
 		ValueType: parser.TypeNumber,
 	}
 
+	// Log the operation to WAL
+	if err := s.writeToWAL(wal.RecordSub, key, &newValue); err != nil {
+		return err
+	}
+
+	// Update the data
+	s.Data[key] = newValue
 	return nil
 }
 
 func (s *Store) Mul(key string, value Value) error {
 	s.GlobalLock.Lock()
 	defer s.GlobalLock.Unlock()
-
-	if err := s.writeToWalSafe("MUL %s %s TYPE %s\n", key, value.Data, value.ValueType); err != nil {
-		return err
-	}
 
 	existingVal, exists := s.Data[key]
 	if !exists {
@@ -257,22 +272,26 @@ func (s *Store) Mul(key string, value Value) error {
 	}
 	
 	result := existingNum * incomingNum
-
-	s.Data[key] = Value{
+	
+	// Create the new value
+	newValue := Value{
 		Data:      formatFloat(result),
 		ValueType: parser.TypeNumber,
 	}
 
+	// Log the operation to WAL
+	if err := s.writeToWAL(wal.RecordMul, key, &newValue); err != nil {
+		return err
+	}
+
+	// Update the data
+	s.Data[key] = newValue
 	return nil
 }
 
 func (s *Store) Div(key string, value Value) error {
 	s.GlobalLock.Lock()
 	defer s.GlobalLock.Unlock()
-
-	if err := s.writeToWalSafe("DIV %s %s TYPE %s\n", key, value.Data, value.ValueType); err != nil {
-		return err
-	}
 
 	existingVal, exists := s.Data[key]
 	if !exists {
@@ -298,12 +317,20 @@ func (s *Store) Div(key string, value Value) error {
 	}
 	
 	result := existingNum / incomingNum
-
-	s.Data[key] = Value{
+	
+	// Create the new value
+	newValue := Value{
 		Data:      formatFloat(result),
 		ValueType: parser.TypeNumber,
 	}
 
+	// Log the operation to WAL
+	if err := s.writeToWAL(wal.RecordDiv, key, &newValue); err != nil {
+		return err
+	}
+
+	// Update the data
+	s.Data[key] = newValue
 	return nil
 }
 
@@ -311,7 +338,8 @@ func (s *Store) Keys(pattern string) ([]string, error) {
 	s.GlobalLock.RLock()
 	defer s.GlobalLock.RUnlock()
 
-	if err := s.writeToWalSafe("KEYS %s\n", pattern); err != nil {
+	// Log the operation (non-modifying operations still get logged for completeness)
+	if err := s.writeToWAL(wal.RecordNoop, "KEYS:"+pattern, nil); err != nil {
 		return nil, err
 	}
 
@@ -329,15 +357,18 @@ func (s *Store) Del(key string) error {
 	s.GlobalLock.Lock()
 	defer s.GlobalLock.Unlock()
 
-	if err := s.writeToWalSafe("DEL %s\n", key); err != nil {
-		return err
-	}
-
+	// Check if key exists first
 	_, exists := s.Data[key]
 	if !exists {
 		return fmt.Errorf("%w: %s", ErrKeyNotFound, key)
 	}
 
+	// Log the delete operation to WAL
+	if err := s.writeToWAL(wal.RecordDel, key, nil); err != nil {
+		return err
+	}
+
+	// Delete the key
 	delete(s.Data, key)
 	return nil
 }
@@ -346,7 +377,8 @@ func (s *Store) Exists(key string) (bool, error) {
 	s.GlobalLock.RLock()
 	defer s.GlobalLock.RUnlock()
 
-	if err := s.writeToWalSafe("EXISTS %s\n", key); err != nil {
+	// Log the operation (read operations still get logged)
+	if err := s.writeToWAL(wal.RecordNoop, "EXISTS:"+key, nil); err != nil {
 		return false, err
 	}
 	
@@ -358,7 +390,8 @@ func (s *Store) Type(key string) (parser.ValueType, error) {
 	s.GlobalLock.RLock()
 	defer s.GlobalLock.RUnlock()
 
-	if err := s.writeToWalSafe("TYPE %s\n", key); err != nil {
+	// Log the operation (read operations still get logged)
+	if err := s.writeToWAL(wal.RecordNoop, "TYPE:"+key, nil); err != nil {
 		return "", err
 	}
 
@@ -368,4 +401,145 @@ func (s *Store) Type(key string) (parser.ValueType, error) {
 	}
 
 	return val.ValueType, nil
+}
+
+// RecoverFromWAL rebuilds the database state from the WAL
+func (s *Store) RecoverFromWAL() error {
+	// Acquire global lock during recovery
+	s.GlobalLock.Lock()
+	defer s.GlobalLock.Unlock()
+	
+	// Create a WAL reader
+	reader, err := s.Wal.Reader()
+	if err != nil {
+		return fmt.Errorf("failed to create WAL reader: %v", err)
+	}
+	defer reader.Close()
+	
+	// Clear existing data (start with clean state)
+	s.Data = make(map[string]Value)
+	
+	recordCount := 0
+	recovered := 0
+	
+	// Track if we've seen a CLEAR record
+	var lastClearRecord int = -1
+	
+	// First pass: scan through all records to find the last CLEAR record
+	records := make([]wal.Record, 0)
+	
+	for {
+		record, err := reader.ReadRecord()
+		if err != nil {
+			// EOF is expected when we reach the end of the WAL
+			if err.Error() == "EOF" {
+				break
+			}
+			return fmt.Errorf("error reading WAL record: %v", err)
+		}
+		
+		records = append(records, *record)
+		
+		// Check if this is a CLEAR record
+		if wal.RecordType(record.Header.Type) == wal.RecordClear {
+			lastClearRecord = len(records) - 1
+		}
+	}
+	
+	// If we found a CLEAR record, only process records after it
+	startIndex := 0
+	if lastClearRecord >= 0 {
+		startIndex = lastClearRecord + 1
+	}
+	
+	// Second pass: apply all records after the last CLEAR
+	for i := startIndex; i < len(records); i++ {
+		record := records[i]
+		recordCount++
+		
+		// Skip NOOP records (used for read operations)
+		if record.Header.Type == uint8(wal.RecordNoop) {
+			continue
+		}
+		
+		// Parse the payload
+		payload := string(record.Payload)
+		
+		// Process based on record type
+		switch wal.RecordType(record.Header.Type) {
+		case wal.RecordSet:
+			// Format: key + null terminator + value + null terminator + value type
+			parts := strings.Split(payload, "\x00")
+			if len(parts) >= 3 {
+				key := parts[0]
+				value := parts[1]
+				valueType := parser.ValueType(parts[2])
+				
+				s.Data[key] = Value{
+					Data:      value,
+					ValueType: valueType,
+				}
+				recovered++
+			}
+			
+		case wal.RecordDel:
+			// Just a key in the payload
+			key := payload
+			delete(s.Data, key)
+			
+		case wal.RecordAdd, wal.RecordSub, wal.RecordMul, wal.RecordDiv:
+			// Format: key + null terminator + result value + null terminator + value type
+			parts := strings.Split(payload, "\x00")
+			if len(parts) >= 3 {
+				key := parts[0]
+				value := parts[1]
+				valueType := parser.ValueType(parts[2])
+				
+				s.Data[key] = Value{
+					Data:      value,
+					ValueType: valueType,
+				}
+				recovered++
+			}
+		}
+	}
+	
+	fmt.Printf("Recovery complete: processed %d WAL records, recovered %d keys\n", 
+		recordCount, len(s.Data))
+	return nil
+}
+
+// Clear removes all data from the store and creates a new WAL file
+func (s *Store) Clear() error {
+	// Acquire global lock to ensure exclusive access during clear
+	s.GlobalLock.Lock()
+	defer s.GlobalLock.Unlock()
+
+	// Close the existing WAL
+	if err := s.Wal.Close(); err != nil {
+		fmt.Printf("Warning: failed to close WAL during clear: %v\n", err)
+		// Continue anyway
+	}
+
+	// Create a new WAL file
+	walOpts := wal.DefaultWALOptions()
+	
+	newWal, err := wal.OpenWAL(walOpts)
+	if err != nil {
+		return fmt.Errorf("failed to create new WAL during clear: %w", err)
+	}
+
+	// Set the new WAL and clear all data
+	s.Wal = newWal
+	s.Data = make(map[string]Value)
+	
+	// We don't need to clear key locks as they're created on demand
+	
+	// Now that we have a new WAL, log the CLEAR operation
+	if err := s.writeToWAL(wal.RecordClear, "CLEAR", nil); err != nil {
+		return fmt.Errorf("failed to write CLEAR record to WAL: %w", err)
+	}
+	
+	fmt.Println("Database cleared successfully")
+	return nil
 }
